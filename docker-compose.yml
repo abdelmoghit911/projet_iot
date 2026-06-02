@@ -1,0 +1,118 @@
+services:
+  # ==================== MQTT BROKER ====================
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: siv-mosquitto
+    ports:
+      - "1883:1883" # MQTT
+      - "9001:9001" # WebSocket MQTT
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/config/passwd:/mosquitto/config/passwd
+      - ./mosquitto/config/acl.conf:/mosquitto/config/acl.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    networks:
+      - siv-network
+    restart: unless-stopped
+
+  # ==================== MYSQL DATABASE ====================
+  mysql:
+    image: mysql:8.0
+    container_name: siv-mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: siv_db
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - mysql_data:/var/lib/mysql
+    networks:
+      - siv-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 10s
+      retries: 10
+
+  # ==================== BACKEND API ====================
+  backend:
+    build: ./backend
+    container_name: siv-backend
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root123
+      DB_NAME: siv_db
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USER: backend
+      MQTT_PASSWORD: backend123
+      PORT: 3000
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    networks:
+      - siv-network
+    restart: unless-stopped
+
+  # ==================== FRONTEND ====================
+  frontend:
+    build: ./frontend
+    container_name: siv-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - siv-network
+    restart: unless-stopped
+
+  # ==================== GPS SIMULATOR ====================
+  gps-simulator:
+    build: ./simulators
+    container_name: siv-gps-simulator
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USER: simulator
+      MQTT_PASSWORD: simulator123
+      BUS_ID: "1"
+      SIMULATOR_TYPE: gps
+    depends_on:
+      - mosquitto
+    networks:
+      - siv-network
+    restart: unless-stopped
+
+  # ==================== CAN BUS SIMULATOR ====================
+  can-simulator:
+    build: ./simulators
+    container_name: siv-can-simulator
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      MQTT_USER: simulator
+      MQTT_PASSWORD: simulator123
+      BUS_ID: "1"
+      SIMULATOR_TYPE: can
+    depends_on:
+      - mosquitto
+    networks:
+      - siv-network
+    restart: unless-stopped
+
+networks:
+  siv-network:
+    driver: bridge
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  mysql_data:

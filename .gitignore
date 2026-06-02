@@ -1,0 +1,11 @@
+node_modules/
+.env
+*.log
+dist/
+build/
+__pycache__/
+*.pyc
+.DS_Store
+mosquitto/data/
+mosquitto/log/
+mysql-data/
