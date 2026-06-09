@@ -59,11 +59,11 @@ function MapClickHandler({ onClick }) {
   return null;
 }
 
-// Component to auto-fit map bounds
+// Component to auto-fit map bounds (only when recenterTrigger is activated manually, recenterTrigger > 0)
 function MapBounds({ positions, recenterTrigger }) {
   const map = useMap();
   const posRef = useRef(positions);
-  const lastTrigger = useRef(-1); // Start at -1 to run once on mount
+  const lastTrigger = useRef(-1);
 
   // Keep positions ref updated without triggering the effect
   useEffect(() => {
@@ -72,7 +72,7 @@ function MapBounds({ positions, recenterTrigger }) {
 
   useEffect(() => {
     const currentPositions = posRef.current;
-    if (currentPositions && currentPositions.length > 0 && recenterTrigger !== lastTrigger.current) {
+    if (currentPositions && currentPositions.length > 0 && recenterTrigger > 0 && recenterTrigger !== lastTrigger.current) {
       const bounds = L.latLngBounds(
         currentPositions.map((p) => [p.latitude, p.longitude]),
       );
@@ -80,6 +80,30 @@ function MapBounds({ positions, recenterTrigger }) {
       lastTrigger.current = recenterTrigger;
     }
   }, [map, recenterTrigger]);
+  return null;
+}
+
+// Component to track a specific bus
+function MapTracker({ trackedBusId, positions, trackTrigger }) {
+  const map = useMap();
+  const lastTrackedBusId = useRef(null);
+  const lastTrigger = useRef(-1);
+
+  useEffect(() => {
+    if (!trackedBusId || !positions[trackedBusId]) return;
+    const { latitude, longitude } = positions[trackedBusId];
+
+    if (lastTrackedBusId.current !== trackedBusId || trackTrigger !== lastTrigger.current) {
+      // First time selecting this bus, or user clicked it again: center and zoom in
+      map.setView([latitude, longitude], 16, { animate: true });
+      lastTrackedBusId.current = trackedBusId;
+      lastTrigger.current = trackTrigger;
+    } else {
+      // Subsequent updates: smoothly pan map without changing zoom
+      map.panTo([latitude, longitude], { animate: true, duration: 0.5 });
+    }
+  }, [trackedBusId, positions, trackTrigger, map]);
+
   return null;
 }
 
@@ -97,6 +121,10 @@ function Dashboard() {
   const [endPoint, setEndPoint] = useState(null);
   const [loading, setLoading] = useState(false);
   const [recenterTrigger, setRecenterTrigger] = useState(0);
+  
+  // Tracking states
+  const [trackedBusId, setTrackedBusId] = useState(null);
+  const [trackTrigger, setTrackTrigger] = useState(0);
   
   const alertShown = useRef(new Set());
 
@@ -328,6 +356,7 @@ function Dashboard() {
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <MapBounds positions={posArray} recenterTrigger={recenterTrigger} />
+                <MapTracker trackedBusId={trackedBusId} positions={positions} trackTrigger={trackTrigger} />
                 <MapClickHandler onClick={handleMapClick} />
                 
                 {/* Custom route planning markers */}
@@ -362,6 +391,16 @@ function Dashboard() {
                     key={idx}
                     position={[pos.latitude, pos.longitude]}
                     icon={busIcon}
+                    eventHandlers={{
+                      click: () => {
+                        if (trackedBusId === pos.bus_id) {
+                          setTrackedBusId(null);
+                        } else {
+                          setTrackedBusId(pos.bus_id);
+                          setTrackTrigger(prev => prev + 1);
+                        }
+                      }
+                    }}
                   >
                     <Popup>
                       <strong>Bus ID: {pos.bus_id}</strong>
@@ -373,6 +412,12 @@ function Dashboard() {
                   </Marker>
                 ))}
               </MapContainer>
+              {trackedBusId && (
+                <div className="position-absolute bottom-0 start-50 translate-middle-x mb-3 p-2 bg-dark text-white rounded shadow-lg d-flex align-items-center gap-2" style={{ zIndex: 1000, opacity: 0.85, fontSize: "13px" }}>
+                  <span className="fw-bold">🎥 Suivi de {buses.find(b => b.id === trackedBusId)?.numero || `Bus ${trackedBusId}`}</span>
+                  <button className="btn btn-xs btn-outline-light py-0 px-2 btn-sm" style={{ fontSize: "11px" }} onClick={() => setTrackedBusId(null)}>Arrêter</button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -391,17 +436,29 @@ function Dashboard() {
               )}
               {buses.map((bus) => {
                 const telem = telemetry[bus.id];
+                const isTracked = trackedBusId === bus.id;
                 return (
                   <div
                     key={bus.id}
-                    className="border rounded p-2 mb-2 bg-light"
+                    className={`border rounded p-2 mb-2 transition-all ${isTracked ? 'border-primary bg-primary bg-opacity-10 shadow-sm' : 'bg-light'}`}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      if (trackedBusId === bus.id) {
+                        setTrackedBusId(null);
+                      } else {
+                        setTrackedBusId(bus.id);
+                        setTrackTrigger(prev => prev + 1);
+                      }
+                    }}
                   >
-                    <strong>{bus.numero}</strong>{" "}
-                    <span
-                      className={`badge ${bus.etat === "active" ? "bg-success" : "bg-secondary"}`}
-                    >
-                      {bus.etat}
-                    </span>
+                    <div className="d-flex justify-content-between align-items-center">
+                      <strong>{bus.numero}</strong>{" "}
+                      <span
+                        className={`badge ${bus.etat === "active" ? "bg-success" : "bg-secondary"}`}
+                      >
+                        {bus.etat}
+                      </span>
+                    </div>
                     {telem ? (
                       <div className="small mt-1">
                         🏎️ {telem.speed} km/h &nbsp;|&nbsp; ⛽ {telem.fuel}%

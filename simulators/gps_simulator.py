@@ -144,7 +144,8 @@ class GPSSimulatorThread(threading.Thread):
         # 3. Create route list if not already overridden by custom control MQTT message
         if not self.route_coords:
             route_coords = [{"lat": float(s["latitude"]), "lon": float(s["longitude"]), "name": s["nom"]} for s in stations]
-            if start_lat is not None and start_lon is not None:
+            has_custom_start = (start_lat is not None and start_lon is not None)
+            if has_custom_start:
                 route_coords.insert(0, {"lat": start_lat, "lon": start_lon, "name": "Point de départ"})
             
             resolved = get_road_route(route_coords)
@@ -153,6 +154,13 @@ class GPSSimulatorThread(threading.Thread):
                 # Clear start_lat to prevent the popping logic from removing a single point.
                 start_lat = None
             self.route_coords = resolved
+            
+            # Spacing optimization:
+            # If the bus does NOT have a custom start position, start it at a random segment
+            # along the route so that buses on the same route are distributed and spaced out.
+            if not has_custom_start and len(self.route_coords) > 2:
+                self.segment = random.randint(0, len(self.route_coords) - 2)
+                self.step = 0
 
         while not self.stop_event.is_set():
             if len(self.route_coords) < 2:
