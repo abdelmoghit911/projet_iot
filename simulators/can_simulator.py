@@ -87,8 +87,11 @@ class BusTelemetry:
 
 
 def main():
-    client = mqtt.Client(client_id=f"can-sim-bus-{BUS_ID}")
-    client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+    client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2, client_id=f"can-sim-bus-{BUS_ID}"
+    )
+    if MQTT_USER:
+        client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
     client.max_queued_messages_set(10)
 
     print(f"[CAN] Connecting to MQTT at {MQTT_HOST}:{MQTT_PORT}...")

@@ -8,8 +8,6 @@ services:
       - "9001:9001" # WebSocket MQTT
     volumes:
       - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - ./mosquitto/config/passwd:/mosquitto/config/passwd
-      - ./mosquitto/config/acl.conf:/mosquitto/config/acl.conf
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     networks:
@@ -50,8 +48,6 @@ services:
       DB_NAME: siv_db
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
-      MQTT_USER: backend
-      MQTT_PASSWORD: backend123
       PORT: 3000
     depends_on:
       mysql:
@@ -81,8 +77,6 @@ services:
     environment:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
-      MQTT_USER: simulator
-      MQTT_PASSWORD: simulator123
       BUS_ID: "1"
       SIMULATOR_TYPE: gps
     depends_on:
@@ -98,8 +92,6 @@ services:
     environment:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
-      MQTT_USER: simulator
-      MQTT_PASSWORD: simulator123
       BUS_ID: "1"
       SIMULATOR_TYPE: can
     depends_on:

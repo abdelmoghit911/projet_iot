@@ -1,5 +1,12 @@
 import React, { useEffect, useState, useRef } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+  useMap,
+} from "react-leaflet";
 import L from "leaflet";
 import socket from "../services/socket";
 import { getBuses, getAlerts, resolveAlert } from "../services/api";
@@ -14,6 +21,8 @@ L.Icon.Default.mergeOptions({
   shadowUrl:
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
+
+const busColors = ["#e74c3c", "#2ecc71", "#3498db", "#f39c12", "#9b59b6"];
 
 const busIcon = new L.Icon({
   iconUrl: "https://cdn-icons-png.flaticon.com/512/3097/3097180.png",
@@ -39,6 +48,7 @@ function MapBounds({ positions }) {
 function Dashboard() {
   const [buses, setBuses] = useState([]);
   const [positions, setPositions] = useState({});
+  const [trails, setTrails] = useState({});
   const [telemetry, setTelemetry] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({ connected: 0, offline: 0, total: 0 });
@@ -60,6 +70,7 @@ function Dashboard() {
   // WebSocket: position updates
   useEffect(() => {
     const handlePosition = (data) => {
+      const point = [data.latitude, data.longitude];
       setPositions((prev) => ({
         ...prev,
         [data.bus_id]: {
@@ -69,6 +80,13 @@ function Dashboard() {
           timestamp: data.timestamp,
         },
       }));
+      // Track trail (last 100 points per bus)
+      setTrails((prev) => {
+        const existing = prev[data.bus_id] || [];
+        const updated = [...existing, point];
+        if (updated.length > 100) updated.shift();
+        return { ...prev, [data.bus_id]: updated };
+      });
     };
 
     const handleTelemetry = (data) => {
@@ -175,6 +193,21 @@ function Dashboard() {
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <MapBounds positions={posArray} />
+                {/* Bus trails (route path) */}
+                {Object.entries(trails).map(([busId, points]) =>
+                  points.length > 1 ? (
+                    <Polyline
+                      key={`trail-${busId}`}
+                      positions={points}
+                      pathOptions={{
+                        color: busColors[parseInt(busId) % busColors.length],
+                        weight: 4,
+                        opacity: 0.7,
+                      }}
+                    />
+                  ) : null,
+                )}
+                {/* Bus markers */}
                 {posArray.map((pos, idx) => (
                   <Marker
                     key={idx}

@@ -1,5 +1,11 @@
 import React, { useEffect, useState, useRef } from "react";
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+} from "react-leaflet";
 import L from "leaflet";
 import socket from "../services/socket";
 import { getLignes, getStations } from "../services/api";
@@ -148,6 +154,21 @@ function PassengerView() {
                       attribution="&copy; OpenStreetMap contributors"
                       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     />
+                    {/* Route line connecting all stations */}
+                    {stations.length > 1 && (
+                      <Polyline
+                        positions={stations.map((s) => [
+                          s.latitude,
+                          s.longitude,
+                        ])}
+                        pathOptions={{
+                          color: "#2196F3",
+                          weight: 5,
+                          opacity: 0.6,
+                          dashArray: "10 6",
+                        }}
+                      />
+                    )}
                     {/* Station markers */}
                     {stations.map((station) => (
                       <Marker
