@@ -60,16 +60,21 @@ function MapClickHandler({ onClick }) {
 }
 
 // Component to auto-fit map bounds
-function MapBounds({ positions }) {
+function MapBounds({ positions, recenterTrigger }) {
   const map = useMap();
+  const hasFit = useRef(false);
+  const lastTrigger = useRef(recenterTrigger);
+
   useEffect(() => {
-    if (positions.length > 0) {
+    if (positions.length > 0 && (!hasFit.current || recenterTrigger !== lastTrigger.current)) {
       const bounds = L.latLngBounds(
         positions.map((p) => [p.latitude, p.longitude]),
       );
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+      hasFit.current = true;
+      lastTrigger.current = recenterTrigger;
     }
-  }, [positions, map]);
+  }, [positions, map, recenterTrigger]);
   return null;
 }
 
@@ -86,6 +91,7 @@ function Dashboard() {
   const [startPoint, setStartPoint] = useState(null);
   const [endPoint, setEndPoint] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [recenterTrigger, setRecenterTrigger] = useState(0);
   
   const alertShown = useRef(new Set());
 
@@ -279,6 +285,14 @@ function Dashboard() {
               <div className="d-flex align-items-center gap-2">
                 {loading && <span className="spinner-border spinner-border-sm text-primary" role="status"></span>}
                 <button
+                  className="btn btn-sm btn-outline-secondary"
+                  type="button"
+                  onClick={() => setRecenterTrigger(prev => prev + 1)}
+                  disabled={loading}
+                >
+                  🎯 Recadrer
+                </button>
+                <button
                   className={`btn btn-sm ${routingMode ? 'btn-danger' : 'btn-outline-primary'}`}
                   onClick={() => {
                     setRoutingMode(!routingMode);
@@ -308,7 +322,7 @@ function Dashboard() {
                   attribution="&copy; OpenStreetMap contributors"
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                <MapBounds positions={posArray} />
+                <MapBounds positions={posArray} recenterTrigger={recenterTrigger} />
                 <MapClickHandler onClick={handleMapClick} />
                 
                 {/* Custom route planning markers */}

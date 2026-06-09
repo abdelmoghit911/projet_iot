@@ -177,7 +177,7 @@ if (IS_DEMO) {
         });
       }
     });
-  }, 4000);
+  }, 1000);
 
 } else {
   // Standard WebSocket connection

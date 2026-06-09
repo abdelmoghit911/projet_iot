@@ -149,11 +149,8 @@ class GPSSimulatorThread(threading.Thread):
                     self.segment = 1
                     self.direction = 1
 
-            # Wait 5 seconds checking stop event
-            for _ in range(5):
-                if self.stop_event.is_set():
-                    break
-                time.sleep(1)
+            # Wait 1 second checking stop event
+            time.sleep(1)
 
         print(f"[GPS] Stopped thread for Bus {self.bus_id}")
 

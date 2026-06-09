@@ -37,7 +37,7 @@ class BusTelemetry:
         self.engine_temp = 80.0  # °C
         self.odometer = round(100000.0 + random.uniform(1000, 50000), 1)
         self.doors = "closed"
-        self.interval = 5
+        self.interval = 1
 
     def update(self):
         # Speed: varies dynamically
@@ -111,11 +111,8 @@ class CANSimulatorThread(threading.Thread):
             except Exception as e:
                 print(f"[CAN] Error publishing for Bus {self.bus_id}: {e}")
 
-            # Sleep 5 seconds (check stop event periodically)
-            for _ in range(5):
-                if self.stop_event.is_set():
-                    break
-                time.sleep(1)
+            # Sleep 1 second checking stop event
+            time.sleep(1)
 
         print(f"[CAN] Stopped thread for Bus {self.bus_id}")
 
