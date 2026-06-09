@@ -10,6 +10,7 @@ import random
 import time
 import urllib.request
 import threading
+import math
 from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 
@@ -42,6 +43,16 @@ def get_stations_for_route(route_id):
         print(f"[GPS Simulator] Error fetching stations for route {route_id}: {e}")
         return []
 
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371000  # radius of Earth in meters
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
 class GPSSimulatorThread(threading.Thread):
     def __init__(self, bus_id, client, stop_event):
         super().__init__()
@@ -53,13 +64,12 @@ class GPSSimulatorThread(threading.Thread):
         self.route_coords = []
         self.segment = 0
         self.step = 0
-        self.steps_per_segment = 10  # Fewer steps between dense road coordinates
         self.direction = 1
 
     def set_custom_route(self, coords):
         print(f"[GPS] Bus {self.bus_id}: Overriding route with custom path of {len(coords)} coordinates.")
         # coords is a list of [lat, lon]
-        self.route_coords = [{"lat": float(pt[0]), "lon": float(pt[1]), "name": f"RoadSegment-{i}"} for i, pt in enumerate(coords)]
+        self.route_coords = [{"lat": float(pt[0]), "lon": float(pt[1]), "name": f"Voie {i}"} for i, pt in enumerate(coords)]
         self.segment = 0
         self.step = 0
         self.direction = 1
@@ -108,13 +118,24 @@ class GPSSimulatorThread(threading.Thread):
             start_pt = self.route_coords[self.segment]
             end_pt = self.route_coords[self.segment + 1] if self.segment + 1 < len(self.route_coords) else self.route_coords[0]
 
-            # Linear interpolation
-            t = self.step / self.steps_per_segment
+            # Calculate distance in meters
+            dist = haversine_distance(start_pt["lat"], start_pt["lon"], end_pt["lat"], end_pt["lon"])
+            
+            # Calculate interpolation steps dynamically based on distance:
+            # - For dense coordinates (road geometry), points are close (< 35m). Take 1 step (1 second) directly.
+            # - For sparse coordinates (stations), interpolate at ~12 meters/sec (43 km/h).
+            if dist < 35:
+                steps = 1
+            else:
+                steps = max(2, int(dist / 12))
+
+            # Interpolate coordinates
+            t = self.step / steps
             lat = start_pt["lat"] + (end_pt["lat"] - start_pt["lat"]) * t
             lon = start_pt["lon"] + (end_pt["lon"] - start_pt["lon"]) * t
 
-            is_at_station = self.step == 0 or self.step == self.steps_per_segment
-            speed = 0.0 if is_at_station else round(25.0 + random.uniform(5, 20), 1)
+            speed_mps = dist / steps if steps > 0 else 0
+            speed = round(speed_mps * 3.6, 1) # convert m/s to km/h
 
             payload = {
                 "bus_id": self.bus_id,
@@ -127,13 +148,13 @@ class GPSSimulatorThread(threading.Thread):
             try:
                 self.client.publish(self.topic, json.dumps(payload), qos=1)
                 print(f"[GPS] Bus {self.bus_id} ({start_pt['name']} -> {end_pt['name']}): "
-                      f"pos=({lat:.4f}, {lon:.4f}) | speed={speed} km/h")
+                      f"pos=({lat:.4f}, {lon:.4f}) | speed={speed} km/h | dist={dist:.1f}m | steps={steps}")
             except Exception as e:
                 print(f"[GPS] Error publishing for Bus {self.bus_id}: {e}")
 
             # Advance steps
             self.step += 1
-            if self.step >= self.steps_per_segment:
+            if self.step >= steps:
                 self.step = 0
                 self.segment += self.direction
                 if self.segment >= len(self.route_coords) - 1:
