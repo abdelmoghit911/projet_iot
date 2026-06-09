@@ -62,19 +62,24 @@ function MapClickHandler({ onClick }) {
 // Component to auto-fit map bounds
 function MapBounds({ positions, recenterTrigger }) {
   const map = useMap();
-  const hasFit = useRef(false);
-  const lastTrigger = useRef(recenterTrigger);
+  const posRef = useRef(positions);
+  const lastTrigger = useRef(-1); // Start at -1 to run once on mount
+
+  // Keep positions ref updated without triggering the effect
+  useEffect(() => {
+    posRef.current = positions;
+  }, [positions]);
 
   useEffect(() => {
-    if (positions.length > 0 && (!hasFit.current || recenterTrigger !== lastTrigger.current)) {
+    const currentPositions = posRef.current;
+    if (currentPositions && currentPositions.length > 0 && recenterTrigger !== lastTrigger.current) {
       const bounds = L.latLngBounds(
-        positions.map((p) => [p.latitude, p.longitude]),
+        currentPositions.map((p) => [p.latitude, p.longitude]),
       );
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-      hasFit.current = true;
       lastTrigger.current = recenterTrigger;
     }
-  }, [positions, map, recenterTrigger]);
+  }, [map, recenterTrigger]);
   return null;
 }
 
