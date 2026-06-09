@@ -157,7 +157,7 @@ def main():
                     thread.join()
                     del active_simulations[bus_id]
 
-            time.sleep(10) # check for updates every 10 seconds
+            time.sleep(1) # check for updates every 1 second
     except KeyboardInterrupt:
         print("[CAN] Shutting down...")
         for bus_id, (thread, stop_event) in active_simulations.items():

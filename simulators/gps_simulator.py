@@ -53,6 +53,48 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
+def get_road_route(coords):
+    """
+    Given a list of coordinates [{"lat": lat, "lon": lon, ...}],
+    queries OSRM to get a continuous list of road coordinates.
+    """
+    if len(coords) < 2:
+        return coords
+
+    try:
+        # Format the coordinates as lon,lat;lon,lat;...
+        coord_strs = [f"{pt['lon']},{pt['lat']}" for pt in coords]
+        path_str = ";".join(coord_strs)
+        url = f"https://router.project-osrm.org/route/v1/driving/{path_str}?overview=full&geometries=geojson"
+        
+        print(f"[GPS Simulator] Querying OSRM for road route with {len(coords)} waypoints...")
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'gps-simulator-backend-app/1.0'}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+            
+            if "routes" in res_data and len(res_data["routes"]) > 0:
+                route_geom = res_data["routes"][0]["geometry"]
+                osrm_coords = route_geom["coordinates"]  # list of [lon, lat]
+                
+                road_coords = []
+                for i, c in enumerate(osrm_coords):
+                    road_coords.append({
+                        "lat": float(c[1]),
+                        "lon": float(c[0]),
+                        "name": f"Road segment {i}"
+                    })
+                print(f"[GPS Simulator] Successfully resolved road route: {len(road_coords)} points.")
+                return road_coords
+            else:
+                print(f"[GPS Simulator] No routes found in OSRM response, using direct path.")
+    except Exception as e:
+        print(f"[GPS Simulator] Failed to query OSRM: {e}. Falling back to direct path.")
+    
+    return coords
+
 class GPSSimulatorThread(threading.Thread):
     def __init__(self, bus_id, client, stop_event):
         super().__init__()
@@ -104,7 +146,13 @@ class GPSSimulatorThread(threading.Thread):
             route_coords = [{"lat": float(s["latitude"]), "lon": float(s["longitude"]), "name": s["nom"]} for s in stations]
             if start_lat is not None and start_lon is not None:
                 route_coords.insert(0, {"lat": start_lat, "lon": start_lon, "name": "Point de départ"})
-            self.route_coords = route_coords
+            
+            resolved = get_road_route(route_coords)
+            if len(resolved) != len(route_coords):
+                # OSRM was successful, so we have a dense road route.
+                # Clear start_lat to prevent the popping logic from removing a single point.
+                start_lat = None
+            self.route_coords = resolved
 
         while not self.stop_event.is_set():
             if len(self.route_coords) < 2:
@@ -184,6 +232,7 @@ def main():
     client.max_queued_messages_set(10)
 
     active_simulations = {} # bus_id -> (thread, stop_event)
+    pending_custom_routes = {} # bus_id -> coords
 
     # Callback when receiving dynamic route control updates
     def on_message(client, userdata, msg):
@@ -198,7 +247,8 @@ def main():
                     thread, _ = active_simulations[bus_id]
                     thread.set_custom_route(coords)
                 else:
-                    print(f"[GPS] Warning: Custom route received for inactive Bus {bus_id}")
+                    print(f"[GPS] Storing custom route for pending/inactive Bus {bus_id}.")
+                    pending_custom_routes[bus_id] = coords
         except Exception as e:
             print(f"[GPS] Error handling control message on topic {topic}: {e}")
 
@@ -225,6 +275,10 @@ def main():
                 if bus_id not in active_simulations:
                     stop_event = threading.Event()
                     thread = GPSSimulatorThread(bus_id, client, stop_event)
+                    if bus_id in pending_custom_routes:
+                        print(f"[GPS] Applying cached custom route for new Bus {bus_id}")
+                        thread.set_custom_route(pending_custom_routes[bus_id])
+                        del pending_custom_routes[bus_id]
                     thread.daemon = True
                     thread.start()
                     active_simulations[bus_id] = (thread, stop_event)
@@ -238,7 +292,7 @@ def main():
                     thread.join()
                     del active_simulations[bus_id]
 
-            time.sleep(10) # check for changes every 10 seconds
+            time.sleep(1) # check for changes every 1 second
     except KeyboardInterrupt:
         print("[GPS] Shutting down...")
         for bus_id, (thread, stop_event) in active_simulations.items():
