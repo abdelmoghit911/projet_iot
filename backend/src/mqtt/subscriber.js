@@ -3,6 +3,7 @@ const pool = require("../models/db");
 const { checkAlerts } = require("../alerts/checker");
 
 let io = null; // Will be set by index.js
+let client = null; // Will be set by startMQTT
 
 function setSocketIO(socketIO) {
   io = socketIO;
@@ -23,7 +24,7 @@ function startMQTT() {
   if (password) opts.password = password;
 
   const protocol = process.env.MQTT_PROTOCOL || (port === "8883" ? "mqtts" : "mqtt");
-  const client = mqtt.connect(`${protocol}://${host}:${port}`, opts);
+  client = mqtt.connect(`${protocol}://${host}:${port}`, opts);
 
   client.on("connect", () => {
     console.log("[MQTT] Connected to broker");
@@ -118,4 +119,12 @@ async function handleCAN(busId, payload) {
   }
 }
 
-module.exports = { startMQTT, setSocketIO };
+function publishToMQTT(topic, payload) {
+  if (client) {
+    client.publish(topic, typeof payload === "string" ? payload : JSON.stringify(payload));
+  } else {
+    console.warn("[MQTT] Cannot publish, client not connected");
+  }
+}
+
+module.exports = { startMQTT, setSocketIO, publishToMQTT };

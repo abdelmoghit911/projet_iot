@@ -1,6 +1,7 @@
 """
 Dynamic GPS Simulator - Automatically detects active buses in the database,
-spawns threads for each bus, and publishes coordinates to MQTT.
+spawns threads for each bus, listens for control messages to override routes,
+and publishes coordinates to MQTT.
 """
 
 import json
@@ -49,6 +50,19 @@ class GPSSimulatorThread(threading.Thread):
         self.stop_event = stop_event
         self.route_id = ((bus_id - 1) % 3) + 1 # Assigns routes 1, 2, or 3
         self.topic = f"bus/{bus_id}/gps"
+        self.route_coords = []
+        self.segment = 0
+        self.step = 0
+        self.steps_per_segment = 10  # Fewer steps between dense road coordinates
+        self.direction = 1
+
+    def set_custom_route(self, coords):
+        print(f"[GPS] Bus {self.bus_id}: Overriding route with custom path of {len(coords)} coordinates.")
+        # coords is a list of [lat, lon]
+        self.route_coords = [{"lat": float(pt[0]), "lon": float(pt[1]), "name": f"RoadSegment-{i}"} for i, pt in enumerate(coords)]
+        self.segment = 0
+        self.step = 0
+        self.direction = 1
 
     def run(self):
         print(f"[GPS] Starting simulation thread for Bus {self.bus_id}")
@@ -75,33 +89,31 @@ class GPSSimulatorThread(threading.Thread):
         except Exception:
             pass # No start position in database, will use first station
 
-        # 3. Create route list
-        route_coords = [{"lat": float(s["latitude"]), "lon": float(s["longitude"]), "name": s["nom"]} for s in stations]
-        
-        if start_lat is not None and start_lon is not None:
-            # Add custom start coordinates to the front of the route
-            route_coords.insert(0, {"lat": start_lat, "lon": start_lon, "name": "Point de départ"})
-
-        segment = 0
-        step = 0
-        steps_per_segment = 15
-        direction = 1
+        # 3. Create route list if not already overridden by custom control MQTT message
+        if not self.route_coords:
+            route_coords = [{"lat": float(s["latitude"]), "lon": float(s["longitude"]), "name": s["nom"]} for s in stations]
+            if start_lat is not None and start_lon is not None:
+                route_coords.insert(0, {"lat": start_lat, "lon": start_lon, "name": "Point de départ"})
+            self.route_coords = route_coords
 
         while not self.stop_event.is_set():
-            if len(route_coords) < 2:
+            if len(self.route_coords) < 2:
                 time.sleep(2)
                 continue
 
-            start_pt = route_coords[segment]
-            end_pt = route_coords[segment + 1] if segment + 1 < len(route_coords) else route_coords[0]
+            # Safely clamp segment index (handles custom routes changes)
+            if self.segment >= len(self.route_coords) - 1:
+                self.segment = 0
+
+            start_pt = self.route_coords[self.segment]
+            end_pt = self.route_coords[self.segment + 1] if self.segment + 1 < len(self.route_coords) else self.route_coords[0]
 
             # Linear interpolation
-            t = step / steps_per_segment
+            t = self.step / self.steps_per_segment
             lat = start_pt["lat"] + (end_pt["lat"] - start_pt["lat"]) * t
             lon = start_pt["lon"] + (end_pt["lon"] - start_pt["lon"]) * t
 
-            # Varies speed, speed is 0 at station points
-            is_at_station = step == 0 or step == steps_per_segment
+            is_at_station = self.step == 0 or self.step == self.steps_per_segment
             speed = 0.0 if is_at_station else round(25.0 + random.uniform(5, 20), 1)
 
             payload = {
@@ -120,22 +132,22 @@ class GPSSimulatorThread(threading.Thread):
                 print(f"[GPS] Error publishing for Bus {self.bus_id}: {e}")
 
             # Advance steps
-            step += 1
-            if step >= steps_per_segment:
-                step = 0
-                segment += direction
-                if segment >= len(route_coords) - 1:
+            self.step += 1
+            if self.step >= self.steps_per_segment:
+                self.step = 0
+                self.segment += self.direction
+                if self.segment >= len(self.route_coords) - 1:
                     # Remove custom start point once we reach the regular route
-                    if start_lat is not None and len(route_coords) > len(stations):
-                        route_coords.pop(0)
-                        start_lat = None # Prevents popping again
-                        segment = 0
+                    if start_lat is not None and len(self.route_coords) > len(stations):
+                        self.route_coords.pop(0)
+                        start_lat = None
+                        self.segment = 0
                     else:
-                        segment = len(route_coords) - 2
-                        direction = -1
-                elif segment <= 0:
-                    segment = 1
-                    direction = 1
+                        self.segment = len(self.route_coords) - 2
+                        self.direction = -1
+                elif self.segment <= 0:
+                    self.segment = 1
+                    self.direction = 1
 
             # Wait 5 seconds checking stop event
             for _ in range(5):
@@ -153,13 +165,35 @@ def main():
         client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
     client.max_queued_messages_set(10)
 
+    active_simulations = {} # bus_id -> (thread, stop_event)
+
+    # Callback when receiving dynamic route control updates
+    def on_message(client, userdata, msg):
+        topic = msg.topic
+        try:
+            parts = topic.split('/')
+            if len(parts) == 4 and parts[2] == 'control' and parts[3] == 'route':
+                bus_id = int(parts[1])
+                coords = json.loads(msg.payload.decode('utf-8'))
+                if bus_id in active_simulations:
+                    print(f"[GPS] Received custom route for Bus {bus_id} with {len(coords)} points.")
+                    thread, _ = active_simulations[bus_id]
+                    thread.set_custom_route(coords)
+                else:
+                    print(f"[GPS] Warning: Custom route received for inactive Bus {bus_id}")
+        except Exception as e:
+            print(f"[GPS] Error handling control message on topic {topic}: {e}")
+
+    client.on_message = on_message
+
     print(f"[GPS] Connecting to MQTT broker at {MQTT_HOST}:{MQTT_PORT}...")
     if MQTT_PORT == 8883:
         client.tls_set()
     client.connect(MQTT_HOST, MQTT_PORT, 60)
+    
+    # Subscribe to route override commands
+    client.subscribe("bus/+/control/route", qos=1)
     client.loop_start()
-
-    active_simulations = {} # bus_id -> (thread, stop_event)
 
     try:
         while True:

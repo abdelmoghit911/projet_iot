@@ -6,10 +6,11 @@ import {
   Popup,
   Polyline,
   useMap,
+  useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
 import socket from "../services/socket";
-import { getBuses, getAlerts, resolveAlert } from "../services/api";
+import { getBuses, getAlerts, resolveAlert, createBus } from "../services/api";
 
 // Fix Leaflet default icon issue with bundlers
 delete L.Icon.Default.prototype._getIconUrl;
@@ -30,6 +31,33 @@ const busIcon = new L.Icon({
   iconAnchor: [16, 16],
   popupAnchor: [0, -20],
 });
+
+const startIcon = new L.Icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+  shadowSize: [41, 41]
+});
+
+const endIcon = new L.Icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+  shadowSize: [41, 41]
+});
+
+function MapClickHandler({ onClick }) {
+  useMapEvents({
+    click(e) {
+      onClick(e.latlng);
+    },
+  });
+  return null;
+}
 
 // Component to auto-fit map bounds
 function MapBounds({ positions }) {
@@ -52,7 +80,72 @@ function Dashboard() {
   const [telemetry, setTelemetry] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({ connected: 0, offline: 0, total: 0 });
+  
+  // Custom routing states
+  const [routingMode, setRoutingMode] = useState(false);
+  const [startPoint, setStartPoint] = useState(null);
+  const [endPoint, setEndPoint] = useState(null);
+  const [loading, setLoading] = useState(false);
+  
   const alertShown = useRef(new Set());
+
+  const handleMapClick = (latlng) => {
+    if (!routingMode) return;
+    if (!startPoint) {
+      setStartPoint([latlng.lat, latlng.lng]);
+    } else if (!endPoint) {
+      setEndPoint([latlng.lat, latlng.lng]);
+      calculateRoute(startPoint, [latlng.lat, latlng.lng]);
+    }
+  };
+
+  const calculateRoute = async (start, end) => {
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson`
+      );
+      if (!res.ok) throw new Error("Erreur OSRM");
+      const data = await res.json();
+      
+      if (!data.routes || data.routes.length === 0) {
+        throw new Error("Aucun itinéraire trouvé");
+      }
+
+      const geojson = data.routes[0].geometry;
+      const coords = geojson.coordinates.map((p) => [p[1], p[0]]); // [lat, lon]
+
+      // 1. Create a bus on the backend
+      const randomSuffix = Math.floor(100 + Math.random() * 900);
+      const resBus = await createBus({
+        immatriculation: `ROUTE-${randomSuffix}`,
+        numero: `BUS-RT-${randomSuffix}`,
+        etat: 'active',
+        latitude: start[0],
+        longitude: start[1]
+      });
+
+      // Reload bus list
+      getBuses().then((res) => setBuses(res.data));
+
+      // 2. Emit the custom route coordinates to the backend via WebSocket
+      socket.emit('bus:set_route', {
+        bus_id: resBus.data.id,
+        coords
+      });
+
+      alert(`Bus ${resBus.data.numero} créé ! Il va rouler sur la route calculée.`);
+      
+      // Reset
+      setStartPoint(null);
+      setEndPoint(null);
+      setRoutingMode(false);
+    } catch (err) {
+      alert("Erreur de calcul de route: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Fetch initial data
   useEffect(() => {
@@ -181,8 +274,31 @@ function Dashboard() {
         {/* Map */}
         <div className="col-lg-8">
           <div className="card shadow-sm">
-            <div className="card-header fw-bold">📍 Carte Temps Réel</div>
-            <div className="card-body p-0" style={{ height: "500px" }}>
+            <div className="card-header fw-bold d-flex justify-content-between align-items-center">
+              <span>📍 Carte Temps Réel</span>
+              <div className="d-flex align-items-center gap-2">
+                {loading && <span className="spinner-border spinner-border-sm text-primary" role="status"></span>}
+                <button
+                  className={`btn btn-sm ${routingMode ? 'btn-danger' : 'btn-outline-primary'}`}
+                  onClick={() => {
+                    setRoutingMode(!routingMode);
+                    setStartPoint(null);
+                    setEndPoint(null);
+                  }}
+                  disabled={loading}
+                >
+                  {routingMode ? '❌ Annuler Itinéraire' : '🗺️ Mode Itinéraire'}
+                </button>
+              </div>
+            </div>
+            <div className="card-body p-0 position-relative" style={{ height: "500px" }}>
+              {routingMode && (
+                <div className="position-absolute top-0 start-50 translate-middle-x mt-2 p-2 bg-dark text-white rounded shadow-sm opacity-85" style={{ zIndex: 1000, fontSize: "14px" }}>
+                  {!startPoint 
+                    ? "🖱️ Cliquez sur la carte pour définir le DÉPART" 
+                    : "🖱️ Cliquez pour définir l'ARRIVÉE"}
+                </div>
+              )}
               <MapContainer
                 center={[33.58, -7.62]}
                 zoom={13}
@@ -193,6 +309,20 @@ function Dashboard() {
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <MapBounds positions={posArray} />
+                <MapClickHandler onClick={handleMapClick} />
+                
+                {/* Custom route planning markers */}
+                {startPoint && (
+                  <Marker position={startPoint} icon={startIcon}>
+                    <Popup>Départ</Popup>
+                  </Marker>
+                )}
+                {endPoint && (
+                  <Marker position={endPoint} icon={endIcon}>
+                    <Popup>Arrivée</Popup>
+                  </Marker>
+                )}
+                
                 {/* Bus trails (route path) */}
                 {Object.entries(trails).map(([busId, points]) =>
                   points.length > 1 ? (
