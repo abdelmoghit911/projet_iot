@@ -90,12 +90,21 @@ router.get('/:id/telemetries', async (req, res) => {
 // POST /api/bus - Add a bus
 router.post('/', async (req, res) => {
   try {
-    const { immatriculation, numero, etat } = req.body;
+    const { immatriculation, numero, etat, latitude, longitude } = req.body;
     const [result] = await pool.execute(
       'INSERT INTO bus (immatriculation, numero, etat) VALUES (?, ?, ?)',
       [immatriculation, numero, etat || 'active']
     );
-    res.status(201).json({ id: result.insertId, immatriculation, numero, etat });
+    const busId = result.insertId;
+
+    if (latitude !== undefined && longitude !== undefined) {
+      await pool.execute(
+        'INSERT INTO positions (bus_id, latitude, longitude, speed, date_position) VALUES (?, ?, ?, 0, NOW())',
+        [busId, latitude, longitude]
+      );
+    }
+
+    res.status(201).json({ id: busId, immatriculation, numero, etat, latitude, longitude });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

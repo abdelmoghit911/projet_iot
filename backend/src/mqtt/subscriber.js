@@ -22,7 +22,8 @@ function startMQTT() {
   if (user) opts.username = user;
   if (password) opts.password = password;
 
-  const client = mqtt.connect(`mqtt://${host}:${port}`, opts);
+  const protocol = process.env.MQTT_PROTOCOL || (port === "8883" ? "mqtts" : "mqtt");
+  const client = mqtt.connect(`${protocol}://${host}:${port}`, opts);
 
   client.on("connect", () => {
     console.log("[MQTT] Connected to broker");

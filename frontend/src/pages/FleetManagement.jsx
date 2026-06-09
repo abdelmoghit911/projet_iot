@@ -34,6 +34,34 @@ function FleetManagement() {
     }
   };
 
+  const handleGenerateRandomBus = async () => {
+    setError('');
+    try {
+      const randomId = Math.floor(10000 + Math.random() * 90000);
+      const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K'];
+      const randomLetter = letters[Math.floor(Math.random() * letters.length)];
+      const randomRegion = Math.floor(1 + Math.random() * 9);
+      
+      const immatriculation = `${randomId}-${randomLetter}-${randomRegion}`;
+      const numero = `BUS${Math.floor(100 + Math.random() * 900)}`;
+      
+      // Casablanca area range: lat 33.55 to 33.61, lon -7.50 to -7.68
+      const latitude = 33.55 + Math.random() * 0.06;
+      const longitude = -7.68 + Math.random() * 0.12;
+
+      await createBus({
+        immatriculation,
+        numero,
+        etat: 'active',
+        latitude,
+        longitude
+      });
+      loadBuses();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    }
+  };
+
   const handleEdit = (bus) => {
     setForm({ immatriculation: bus.immatriculation, numero: bus.numero, etat: bus.etat });
     setEditing(bus.id);
@@ -57,8 +85,17 @@ function FleetManagement() {
 
       {/* Form */}
       <div className="card shadow-sm mb-4">
-        <div className="card-header fw-bold">
-          {editing ? '✏️ Modifier un Bus' : '➕ Ajouter un Bus'}
+        <div className="card-header fw-bold d-flex justify-content-between align-items-center">
+          <span>{editing ? '✏️ Modifier un Bus' : '➕ Ajouter un Bus'}</span>
+          {!editing && (
+            <button
+              className="btn btn-sm btn-outline-success"
+              type="button"
+              onClick={handleGenerateRandomBus}
+            >
+              🎲 Générer un Bus Aléatoire
+            </button>
+          )}
         </div>
         <div className="card-body">
           <form onSubmit={handleSubmit} className="row g-2">
